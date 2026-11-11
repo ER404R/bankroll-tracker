@@ -1,0 +1,116 @@
+name: Android Release
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Java 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Set up pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.8 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 737ba8f885dc774b53b442759999a312c9461e4e
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze --no-pub
+      - run: flutter test --no-pub
+      - name: Set release version
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          test "$RUN_ATTEMPT" -lt 100
+          base=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          code=$((RUN_NUMBER * 100 + RUN_ATTEMPT))
+          version="${base}-build.${code}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_CODE=$code" >> "$GITHUB_ENV"
+      - name: Build signed ARM64 APK
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          KEY_JKS: ${{ secrets.KEY_JKS }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$KEY_JKS"
+          test -n "$ANDROID_STORE_PASSWORD"
+          test -n "$ANDROID_KEY_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          umask 077
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$KEY_JKS" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          flutter build apk --release --target lib/main.dart --target-platform android-arm64 --build-name "$RELEASE_VERSION" --build-number "$RELEASE_CODE"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/bankroll-tracker-arm64.apk
+          python3 scripts/verify_release.py dist/bankroll-tracker-arm64.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/bankroll-tracker-arm64.apk
+          cd dist
+          sha256sum bankroll-tracker-arm64.apk > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: android-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: android-release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          # Reject an old run if a newer version has already been released.
+          latest=$(gh api "repos/$GH_REPO/releases" --jq '.[].tag_name')
+          export LATEST_TAGS="$latest"
+          python3 - <<'PY'
+          import os, re
+          code = int(os.environ['VERSION'].rsplit('.', 1)[1])
+          previous = [int(x) for x in re.findall(r'-build\.(\d+)', os.environ['LATEST_TAGS'])]
+          if previous and max(previous) >= code:
+              raise SystemExit('A newer/equal build is published. Push a new commit instead of rerunning an old workflow.')
+          PY
+          cat > notes.md <<'NOTES'
+          Bankroll Tracker for ARM64 Android phones, including Nothing Phone (3a) Pro.
+          Development release: import/export and migration remain scheduled for the final 1.0 milestone. Server features are deferred. Local data stays on-device.
+          Add this repository to Obtainium to receive updates.
+          NOTES
+          gh release create "$VERSION" bankroll-tracker-arm64.apk SHA256SUMS --target "$COMMIT" --title "$VERSION" --notes-file notes.md --latest
