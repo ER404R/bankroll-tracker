@@ -166,29 +166,154 @@ void main() {
     expect((await repo.entries()).length, 1);
     await repo.db.close();
   });
-  test('confirmed bulk game correction updates blind metrics while retaining money and IDs', () async {
-    final repo = await LedgerRepository.open(path: inMemoryDatabasePath);
-    final bank = (await repo.definitions('bankroll')).first;
-    final game = {'id': newId(), 'name': 'Test NL', 'bigBlind': 1000};
-    await repo.saveDefinition('game', game);
-    final entry = Entry({
-      'id': newId(),
-      'bankroll': bank['id'],
-      'kind': kinds[0],
-      'game': game['id'],
-      'bigBlind': 1000,
-      'start': '2026-01-01T10:00:00',
-      'end': '2026-01-01T11:00:00',
-      'buyIn': 100000,
-      'cashOut': 200000,
-    });
-    await repo.saveEntry(entry);
-    expect(Totals(await repo.entries()).bb, 100);
-    await repo.replaceDefinition('game', {...game, 'bigBlind': 2000});
-    final saved = (await repo.entries()).single;
-    expect(saved.id, entry.id);
-    expect(saved.profit(), 100000);
-    expect(Totals([saved]).bb, 50);
-    await repo.db.close();
-  });
+  test(
+    'game default edits preserve historic blind metrics, money and IDs',
+    () async {
+      final repo = await LedgerRepository.open(path: inMemoryDatabasePath);
+      final bank = (await repo.definitions('bankroll')).first;
+      final game = {'id': newId(), 'name': 'Test NL', 'bigBlind': 1000};
+      await repo.saveDefinition('game', game);
+      final entry = Entry({
+        'id': newId(),
+        'bankroll': bank['id'],
+        'kind': kinds[0],
+        'game': game['id'],
+        'bigBlind': 1000,
+        'start': '2026-01-01T10:00:00',
+        'end': '2026-01-01T11:00:00',
+        'buyIn': 100000,
+        'cashOut': 200000,
+      });
+      await repo.saveEntry(entry);
+      expect(Totals(await repo.entries()).bb, 100);
+      await repo.replaceDefinition('game', {...game, 'bigBlind': 2000});
+      final saved = (await repo.entries()).single;
+      expect(saved.id, entry.id);
+      expect(saved.profit(), 100000);
+      expect(Totals([saved]).bb, 100);
+      expect(saved.n('bigBlind'), 1000);
+      await repo.db.close();
+    },
+  );
+  test(
+    'game archive and merge preserve legacy blinds, entries and active session',
+    () async {
+      final repo = await LedgerRepository.open(path: inMemoryDatabasePath);
+      addTearDown(repo.db.close);
+      final bank = (await repo.definitions('bankroll')).single;
+      final original = {
+        'id': newId(),
+        'name': 'Texas Holdem',
+        'limit': 'NL',
+        'bigBlind': 2000,
+        'smallBlind': 500,
+      };
+      final target = {
+        'id': newId(),
+        'name': 'Other',
+        'limit': 'NL',
+        'bigBlind': 100000,
+        'smallBlind': 50000,
+      };
+      await repo.saveDefinition('game', original);
+      await repo.saveDefinition('game', target);
+      final legacy = Entry({
+        'id': newId(),
+        'bankroll': bank['id'],
+        'kind': kinds[0],
+        'game': original['id'],
+        'start': '2026-01-01T10:00:00',
+        'end': '2026-01-01T11:00:00',
+        'buyIn': 200000,
+        'cashOut': 300000,
+      });
+      await repo.saveEntry(legacy);
+      await repo.startLive(
+        Entry({
+          ...legacy.data,
+          'id': newId(),
+          'smallBlind': 700,
+          'bigBlind': 3000,
+        }),
+      );
+      await repo.replaceDefinition('game', {
+        ...original,
+        'name': 'Renamed',
+        'bigBlind': 10000,
+      });
+      final frozen = (await repo.entries()).single;
+      expect(frozen.n('bigBlind'), 2000);
+      expect(frozen.n('smallBlind'), 500);
+      expect((await repo.state('live'))['bigBlind'], 3000);
+      await repo.deleteDefinitionAndEntries('game', original['id'] as String);
+      expect((await repo.entries()).length, 1);
+      expect(
+        (await repo.definitions('game'))
+            .singleWhere((g) => g['id'] == original['id'])['hidden'],
+        true,
+      );
+      final archived = (await repo.definitions('game'))
+          .singleWhere((g) => g['id'] == original['id']);
+      await repo.replaceDefinition('game', {...archived, 'hidden': false});
+      expect(
+        (await repo.definitions('game'))
+            .singleWhere((g) => g['id'] == original['id'])['hidden'],
+        false,
+      );
+      await repo.replaceDefinition(
+        'game',
+        archived,
+        mergeInto: target['id'] as String,
+      );
+      final merged = (await repo.entries()).single;
+      expect(merged.id, legacy.id);
+      expect(merged.profit(), 100000);
+      expect(merged.n('bigBlind'), 2000);
+      expect(merged.n('smallBlind'), 500);
+      expect(merged.s('game'), target['id']);
+      expect((await repo.state('live'))['game'], target['id']);
+      expect((await repo.state('live'))['smallBlind'], 700);
+      expect((await repo.state('live'))['bigBlind'], 3000);
+      expect((await repo.definitions('game')).length, 1);
+      await expectLater(
+        repo.replaceDefinition('game', target, mergeInto: 'missing'),
+        throwsFormatException,
+      );
+      expect((await repo.entries()).single.data, merged.data);
+    },
+  );
+  test(
+    'game edit freezes missing small blind from historical explicit big blind',
+    () async {
+      final repo = await LedgerRepository.open(path: inMemoryDatabasePath);
+      addTearDown(repo.db.close);
+      final bank = (await repo.definitions('bankroll')).single;
+      final game = {
+        'id': newId(),
+        'name': 'Texas Holdem',
+        'bigBlind': 2000,
+        'currency': 'EUR',
+      };
+      await repo.saveDefinition('game', game);
+      final e = Entry({
+        'id': newId(),
+        'bankroll': bank['id'],
+        'kind': kinds[0],
+        'game': game['id'],
+        'bigBlind': 4000,
+        'start': '2026-01-01T10:00:00',
+        'end': '2026-01-01T11:00:00',
+      });
+      await repo.saveEntry(e);
+      await repo.replaceDefinition('game', {...game, 'name': 'Renamed'});
+      expect((await repo.entries()).single.n('smallBlind'), 2000);
+      final target = {'id': newId(), 'name': 'USD game', 'currency': 'USD'};
+      await repo.saveDefinition('game', target);
+      await expectLater(
+        repo.replaceDefinition('game', game, mergeInto: target['id'] as String),
+        throwsFormatException,
+      );
+      expect((await repo.entries()).single.s('game'), game['id']);
+    },
+  );
 }
