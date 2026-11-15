@@ -138,8 +138,9 @@ class Entry {
         : base;
   }
 
-  int get seconds =>
-      max(0, end.difference(start).inSeconds - n('breakSeconds'));
+  int get seconds => data.containsKey('reportedDurationSeconds')
+      ? n('reportedDurationSeconds')
+      : max(0, end.difference(start).inSeconds - n('breakSeconds'));
   double get hours => seconds / 3600;
   double get hands => hours * (n('handsPerHour') == 0 ? 25 : n('handsPerHour'));
   List<Json> get events => (data['events'] as List? ?? [])
@@ -158,6 +159,11 @@ class Entry {
     if (n('breakSeconds') < 0 ||
         n('breakSeconds') > end.difference(start).inSeconds) {
       throw const FormatException('Pause überschreitet Sessiondauer');
+    }
+    if (data.containsKey('reportedDurationSeconds') &&
+        (n('reportedDurationSeconds') < 0 ||
+            n('reportedDurationSeconds') > end.difference(start).inSeconds)) {
+      throw const FormatException('Erfasste Spieldauer überschreitet Zeitraum');
     }
     for (final k in [
       'buyIn',
