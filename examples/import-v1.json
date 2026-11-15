@@ -1,0 +1,33 @@
+{
+  "format": "bankroll-tracker-import",
+  "version": 1,
+  "source": {
+    "id": "synthetic-example-bankroll",
+    "name": "Synthetic example"
+  },
+  "currency": "EUR",
+  "coverage": {
+    "transfers": "mapped",
+    "sessions": "missing"
+  },
+  "warnings": [
+    "Synthetic example only"
+  ],
+  "expected": {
+    "count": 1,
+    "balanceEffect": "12.50"
+  },
+  "records": [
+    {
+      "sourceId": "sample-deposit-1",
+      "kind": "deposit",
+      "currency": "EUR",
+      "date": "2025-01-01",
+      "money": {
+        "amount": "12.50"
+      },
+      "result": "12.50",
+      "note": "Synthetic example"
+    }
+  ]
+}

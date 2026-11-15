@@ -69,6 +69,7 @@ class _EntryFormState extends State<EntryForm> {
       ...moneyFields,
       'rebuys',
       'breakMinutes',
+      'reportedMinutes',
       'soldPercent',
       'placement',
       'players',
@@ -80,6 +81,10 @@ class _EntryFormState extends State<EntryForm> {
             ? widget.entry == null
                   ? ''
                   : moneyInput((d[k] as int?) ?? 0)
+            : k == 'reportedMinutes'
+            ? d.containsKey('reportedDurationSeconds')
+                  ? ((d['reportedDurationSeconds'] as num) / 60).toString()
+                  : ''
             : k == 'breakMinutes'
             ? widget.entry == null
                   ? ''
@@ -424,6 +429,18 @@ class _EntryFormState extends State<EntryForm> {
         throw const FormatException('Ungültige Pause');
       }
       entry['breakSeconds'] = (pause * 60).round();
+      if (d.containsKey('reportedDurationSeconds')) {
+        final minutes = double.tryParse(
+          controls['reportedMinutes']!.text.replaceAll(',', '.'),
+        );
+        if (minutes == null ||
+            !minutes.isFinite ||
+            minutes < 0 ||
+            (minutes * 60) != (minutes * 60).roundToDouble()) {
+          throw const FormatException('Gültige erfasste Spieldauer angeben');
+        }
+        entry['reportedDurationSeconds'] = (minutes * 60).round();
+      }
       entry['soldBp'] = shareBasisPoints(controls['soldPercent']!.text);
       entry['note'] = controls['note']!.text;
       entry['multiDay'] = controls['multiDay']!.text;
@@ -604,7 +621,16 @@ class _EntryFormState extends State<EntryForm> {
                       field('expenses', 'Ausgaben'),
                       field('chipExpenses', 'Ausgaben in Chips'),
                     ),
-                    field('breakMinutes', 'Pause in Minuten'),
+                    if (d.containsKey('reportedDurationSeconds')) ...[
+                      field(
+                        'reportedMinutes',
+                        'Spieldauer laut Quelle (Minuten)',
+                      ),
+                      const Text(
+                        'Diese Dauer wird für Berichte verwendet. Pausenereignisse sind nicht bekannt und werden nicht erfunden.',
+                      ),
+                    ] else
+                      field('breakMinutes', 'Pause in Minuten'),
                     if (tournament) ...[
                       pair(
                         field('placement', 'Platzierung'),

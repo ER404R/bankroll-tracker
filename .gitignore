@@ -58,6 +58,7 @@ app.*.map.json
 /AGENTS.md
 /docs/*
 !/docs/DISTRIBUTION.md
+!/docs/IMPORT_FORMAT.md
 /.release-private/
 *.jks
 *.keystore

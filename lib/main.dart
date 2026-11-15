@@ -12,6 +12,8 @@ import 'settings.dart';
 import 'session_chart.dart';
 import 'session_summary.dart';
 import 'device_services.dart';
+import 'import_screen.dart';
+import 'source_record_view.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1383,6 +1385,21 @@ class _LedgerHomeState extends State<LedgerHome> {
                   sessionMetrics(e),
                   if (e.s('note').isNotEmpty)
                     line('Notiz', Flexible(child: Text(e.s('note')))),
+                  if (e.data['sourceRecord'] != null)
+                    TextButton.icon(
+                      icon: const Icon(Icons.source_outlined),
+                      label: const Text('Importierter Quellbeleg / Verlauf'),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SourceRecordView(
+                            record: Map<String, dynamic>.from(
+                              e.data['sourceRecord'],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (e.session)
                     SessionChart(
                       entry: e,
@@ -2305,8 +2322,20 @@ class _LedgerHomeState extends State<LedgerHome> {
                 ),
             ]),
             card('Daten verwalten', [
+              ListTile(
+                leading: const Icon(Icons.file_open),
+                title: const Text('JSON importieren / Importverlauf'),
+                subtitle: const Text('Vorschau, Abgleich und Rücknahme'),
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ImportScreen(repo: repo)),
+                  );
+                  await widget.onPreferences();
+                  await refresh();
+                },
+              ),
               for (final title in [
-                'Import from Poker Bankroll Tracker',
                 'CSV importieren',
                 'CSV exportieren',
                 'Vollständiges Backup / Wiederherstellen',
@@ -2317,7 +2346,7 @@ class _LedgerHomeState extends State<LedgerHome> {
                   subtitle: const Text('Geplant: finaler 1.0-Meilenstein'),
                   onTap: () => info(
                     title,
-                    'Import, Export und vollständige Migration werden nach dem Kern-App-Vergleich im finalen 1.0-Meilenstein implementiert. Quelldateien, Vorschau, Abgleich und Rücknahme müssen dann validiert werden.',
+                    'JSON-Import ist über den eigenen Menüpunkt verfügbar. CSV, vollständige Backups und weitere Quellformate folgen im finalen 1.0-Meilenstein.',
                   ),
                 ),
               ListTile(

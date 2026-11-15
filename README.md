@@ -15,3 +15,5 @@ JAVA_HOME=/home/erik/.local/share/android-studio/jbr \
 Use only the dedicated `felt_ledger_dev` emulator for development. Never target an attached physical phone. Private reference and validation documents are kept locally and excluded from this public repository.
 
 See [GitHub releases and Obtainium setup](docs/DISTRIBUTION.md).
+
+Local JSON import with preview, reconciliation and undo is available under Account. See [import file format](docs/IMPORT_FORMAT.md). Full migration and backup restore remain outstanding.

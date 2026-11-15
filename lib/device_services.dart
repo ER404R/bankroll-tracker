@@ -2,6 +2,14 @@ import 'package:flutter/services.dart';
 
 class DeviceServices {
   static const channel = MethodChannel('feltledger/device');
+  static Future<Uint8List?> pickImportFile() =>
+      channel.invokeMethod<Uint8List>('pickImportFile');
+  static Future<bool> saveDocument(String name, Uint8List bytes) async =>
+      await channel.invokeMethod<bool>('saveDocument', {
+        'name': name,
+        'bytes': bytes,
+      }) ??
+      false;
   static Future<Map<Object?, Object?>> appInfo() async =>
       await channel.invokeMapMethod<Object?, Object?>('appInfo') ?? {};
   static Future<bool> authenticate() async =>
