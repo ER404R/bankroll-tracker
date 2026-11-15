@@ -4,12 +4,15 @@ import 'package:intl/intl.dart';
 
 import 'domain.dart';
 import 'repository.dart';
+import 'game_label.dart';
 
 class EntryForm extends StatefulWidget {
   final LedgerRepository repo;
   final List<Json> bankrolls, locations, games;
   final Entry? entry;
-  final bool live, finishing;
+  final bool live, finishing, embedded;
+  final Future<void> Function()? onSaved;
+  final Future<void> Function()? onManageGames;
   final Json prefs;
   const EntryForm({
     super.key,
@@ -20,6 +23,9 @@ class EntryForm extends StatefulWidget {
     this.entry,
     this.live = false,
     this.finishing = false,
+    this.embedded = false,
+    this.onSaved,
+    this.onManageGames,
     required this.prefs,
   });
   @override
@@ -102,6 +108,21 @@ class _EntryFormState extends State<EntryForm> {
   }
 
   @override
+  void didUpdateWidget(covariant EntryForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.locations, widget.locations)) {
+      locations = List.from(widget.locations);
+    }
+    if (!identical(oldWidget.games, widget.games)) {
+      games = List.from(widget.games);
+      if (widget.entry == null &&
+          !games.any((g) => g['id'] == d['game'] && g['hidden'] != true)) {
+        d.remove('game');
+      }
+    }
+  }
+
+  @override
   void dispose() {
     for (final c in controls.values) {
       c.dispose();
@@ -109,11 +130,31 @@ class _EntryFormState extends State<EntryForm> {
     super.dispose();
   }
 
-  Widget field(String key, String label, {bool text = false}) => Padding(
+  static const cyan = Color(0xff49afd0);
+  bool stakingExpanded = false;
+  int definitionEpoch = 0;
+  Widget labeled(String label, Widget child) => Padding(
     padding: const EdgeInsets.only(bottom: 16),
-    child: TextFormField(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            label.toUpperCase(),
+            style: const TextStyle(color: cyan, fontSize: 11, height: 1.2),
+          ),
+        ),
+        child,
+      ],
+    ),
+  );
+  Widget field(String key, String label, {bool text = false}) => labeled(
+    label,
+    TextFormField(
       key: ValueKey(key),
       controller: controls[key],
+      style: const TextStyle(fontSize: 14),
       keyboardType: text
           ? TextInputType.multiline
           : const TextInputType.numberWithOptions(decimal: true, signed: true),
@@ -121,8 +162,6 @@ class _EntryFormState extends State<EntryForm> {
       autocorrect: widget.prefs['disableAutocorrect'] != true,
       selectAllOnFocus: widget.prefs['selectInput'] == true,
       decoration: InputDecoration(
-        labelText: label.toUpperCase(),
-        floatingLabelBehavior: FloatingLabelBehavior.always,
         hintText: text
             ? null
             : moneyFields.contains(key)
@@ -131,15 +170,16 @@ class _EntryFormState extends State<EntryForm> {
       ),
     ),
   );
-  Widget dropdown(String label, String key, List<String> values) => Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: DropdownButtonFormField<String>(
+  Widget dropdown(String label, String key, List<String> values) => labeled(
+    label,
+    DropdownButtonFormField<String>(
       initialValue: d[key],
       isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label.toUpperCase(),
-        floatingLabelBehavior: FloatingLabelBehavior.always,
+      style: TextStyle(
+        fontSize: 14,
+        color: Theme.of(context).colorScheme.onSurface,
       ),
+      icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xff395563)),
       items: values
           .map(
             (s) => DropdownMenuItem(
@@ -227,67 +267,80 @@ class _EntryFormState extends State<EntryForm> {
     }
   }
 
-  Widget dateField(String key, String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-      ),
-      onPressed: () => pickTime(key),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
+  Widget dateField(String key, String label) => labeled(
+    label,
+    InkWell(
+      onTap: () => pickTime(key),
+      borderRadius: BorderRadius.circular(5),
+      child: InputDecorator(
+        decoration: const InputDecoration(),
         child: Text(
-          '$label\n${DateFormat(widget.prefs['timeFormat'] == '12 Stunden' ? 'dd.MM.yy hh:mm a' : 'dd.MM.yy HH:mm').format(DateTime.parse(d[key]).toLocal())}',
+          DateFormat(
+            widget.prefs['timeFormat'] == '12 Stunden'
+                ? 'dd.MM.yy hh:mm a'
+                : 'dd.MM.yy HH:mm',
+          ).format(DateTime.parse(d[key]).toLocal()),
+          style: const TextStyle(fontSize: 14),
         ),
       ),
     ),
   );
+  String definitionLabel(String category, Json item) {
+    if (category == 'location') {
+      return '${item['name']} (${item['room'] ?? 'Home Game'} • ${item['currency'] ?? d['currency']})';
+    }
+    return gameDefinitionLabel(item);
+  }
+
   Widget definition(String category, String label, List<Json> definitions) {
     final key = category == 'location' ? 'location' : 'game';
     final available = definitions
         .where((x) => x['hidden'] != true || x['id'] == d[key])
         .toList();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: DropdownButtonFormField<String>(
-              key: ValueKey('$key-${available.length}'),
-              initialValue: available.any((x) => x['id'] == d[key])
-                  ? d[key]
-                  : null,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: label.toUpperCase(),
-                floatingLabelBehavior: FloatingLabelBehavior.always,
+    return labeled(
+      label,
+      DropdownButtonFormField<String>(
+        key: ValueKey('$key-${available.length}-${d[key]}-$definitionEpoch'),
+        initialValue: available.any((x) => x['id'] == d[key]) ? d[key] : null,
+        isExpanded: true,
+        style: TextStyle(
+          fontSize: 14,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+        icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xff395563)),
+        hint: Text('$label wählen'),
+        items: [
+          for (final item in available)
+            DropdownMenuItem<String>(
+              value: item['id'],
+              child: Text(
+                definitionLabel(category, item),
+                overflow: TextOverflow.ellipsis,
               ),
-              items: available
-                  .map(
-                    (x) => DropdownMenuItem<String>(
-                      value: x['id'],
-                      child: Text(x['name'], overflow: TextOverflow.ellipsis),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() {
-                d[key] = v;
-                if (category == 'location' && widget.entry == null) {
-                  final place = definitions.firstWhere(
-                    (item) => item['id'] == v,
-                  );
-                  d['handsPerHour'] = place['room'] == 'Online' ? 75 : 25;
-                }
-              }),
+            ),
+          DropdownMenuItem(
+            value: '__create__',
+            child: Text(
+              '+ $label erstellen',
+              style: const TextStyle(color: cyan),
             ),
           ),
-          IconButton(
-            tooltip: '$label erstellen',
-            onPressed: () => addDefinition(category),
-            icon: const Icon(Icons.add_circle_outline),
-          ),
         ],
+        onChanged: (v) async {
+          if (v == '__create__') {
+            setState(() {});
+            await addDefinition(category);
+            if (mounted) setState(() => definitionEpoch++);
+            return;
+          }
+          setState(() {
+            d[key] = v;
+            if (category == 'location' && widget.entry == null) {
+              final place = definitions.firstWhere((item) => item['id'] == v);
+              d['handsPerHour'] = place['room'] == 'Online' ? 75 : 25;
+            }
+          });
+        },
       ),
     );
   }
@@ -460,6 +513,11 @@ class _EntryFormState extends State<EntryForm> {
         (b) => b['id'] == entry['bankroll'],
       );
       entry['currency'] = bankroll['currency'];
+      if (isSession &&
+          widget.entry == null &&
+          games.firstWhere((g) => g['id'] == entry['game'])['hidden'] == true) {
+        throw const FormatException('Bitte ein aktives Spiel wählen');
+      }
       if (isSession) {
         final location = locations.firstWhere(
           (l) => l['id'] == entry['location'],
@@ -469,11 +527,17 @@ class _EntryFormState extends State<EntryForm> {
             'Location und Bankroll benötigen dieselbe Währung',
           );
         }
-        entry['smallBlind'] =
-            games.firstWhere((g) => g['id'] == entry['game'])['smallBlind'] ??
-            0;
-        entry['bigBlind'] =
-            games.firstWhere((g) => g['id'] == entry['game'])['bigBlind'] ?? 0;
+        final sameGame =
+            widget.entry != null && entry['game'] == widget.entry!.s('game');
+        final selectedGame = games.firstWhere((g) => g['id'] == entry['game']);
+        if (!sameGame || !entry.containsKey('bigBlind')) {
+          entry['bigBlind'] = selectedGame['bigBlind'] ?? 0;
+        }
+        if (!sameGame || !entry.containsKey('smallBlind')) {
+          entry['smallBlind'] =
+              selectedGame['smallBlind'] ??
+              defaultSmallBlind(entry['bigBlind'] as int);
+        }
       }
       if (kind == kinds[5] && entry['expenses'] < 0) {
         throw const FormatException('Kosten positiv erfassen');
@@ -510,7 +574,8 @@ class _EntryFormState extends State<EntryForm> {
       } else {
         await widget.repo.saveEntry(Entry(entry));
       }
-      if (mounted) Navigator.pop(context);
+      if (widget.onSaved != null) await widget.onSaved!();
+      if (mounted && !widget.embedded) Navigator.pop(context);
     } catch (e) {
       setState(() {
         error = e.toString();
@@ -524,174 +589,283 @@ class _EntryFormState extends State<EntryForm> {
     final kind = d['kind'];
     final session = kinds.take(4).contains(kind);
     final tournament = kinds.sublist(1, 3).contains(kind);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.live
-              ? 'Live Session konfigurieren'
-              : widget.finishing
-              ? 'Session abschließen'
-              : widget.entry == null
-              ? 'Eintrag hinzufügen'
-              : 'Eintrag bearbeiten',
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Abbrechen',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
+    return Theme(
+      data: Theme.of(context).copyWith(
+        inputDecorationTheme: Theme.of(context).inputDecorationTheme.copyWith(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 6,
+            vertical: 8,
           ),
-        ],
-      ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: FilledButton.icon(
-            onPressed: saving ? null : save,
-            icon: Icon(widget.live ? Icons.play_arrow : Icons.check),
-            label: Text(
-              saving
-                  ? 'Wird gespeichert …'
-                  : widget.live
-                  ? 'Start'
-                  : 'Speichern',
-            ),
-          ),
+          isDense: true,
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(10),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Text(
-                      error!,
-                      key: const ValueKey('formError'),
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontWeight: FontWeight.bold,
+      child: Scaffold(
+        appBar: widget.embedded
+            ? null
+            : AppBar(
+                automaticallyImplyLeading: false,
+                title: Text(
+                  widget.live
+                      ? 'Live Session konfigurieren'
+                      : widget.finishing
+                      ? 'Session abschließen'
+                      : widget.entry == null
+                      ? 'Eintrag hinzufügen'
+                      : 'Eintrag bearbeiten',
+                ),
+                actions: [
+                  IconButton(
+                    tooltip: 'Abbrechen',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 30),
+                  ),
+                ],
+              ),
+        floatingActionButton: widget.embedded
+            ? null
+            : FloatingActionButton.extended(
+                onPressed: saving ? null : save,
+                backgroundColor: cyan,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: const StadiumBorder(),
+                icon: Icon(widget.live ? Icons.play_arrow : Icons.check),
+                label: Text(
+                  saving
+                      ? 'Wird gespeichert …'
+                      : widget.live
+                      ? 'Start'
+                      : 'Speichern',
+                ),
+              ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(10, 20, 10, 100),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Text(
+                        error!,
+                        key: const ValueKey('formError'),
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
-                  ),
-                pair(
-                  dropdown(
-                    'Art',
-                    'kind',
-                    widget.live
-                        ? {
-                            ...liveKinds,
-                            if (widget.entry != null) kind as String,
-                          }.toList()
-                        : {
-                            ...entryKinds,
-                            if (widget.entry != null) kind as String,
-                          }.toList(),
-                  ),
-                  session
-                      ? dropdown('Tischgröße', 'tableSize', [
-                          'Heads-Up',
-                          'Short-Handed',
-                          'Full-Ring',
-                        ])
-                      : const SizedBox(),
-                ),
-                if (!widget.live)
-                  pair(dateField('start', 'Start'), dateField('end', 'Ende')),
-                if (session) ...[
-                  definition('location', 'Location', locations),
-                  definition('game', 'Spiel', games),
                   pair(
-                    field('buyIn', 'Buy-in'),
-                    !widget.live
-                        ? field('cashOut', 'Cash-out')
+                    dropdown(
+                      'Art',
+                      'kind',
+                      widget.live
+                          ? {
+                              ...liveKinds,
+                              if (widget.entry != null) kind as String,
+                            }.toList()
+                          : {
+                              ...entryKinds,
+                              if (widget.entry != null) kind as String,
+                            }.toList(),
+                    ),
+                    session
+                        ? dropdown('Tischgröße', 'tableSize', [
+                            'Heads-Up',
+                            'Short-Handed',
+                            'Full-Ring',
+                          ])
                         : const SizedBox(),
                   ),
-                  if (!widget.live) ...[
-                    pair(
-                      field('rebuys', 'Anzahl an Rebuys'),
-                      field('rebuyCost', 'Rebuy Kosten'),
-                    ),
-                    pair(
-                      field('expenses', 'Ausgaben'),
-                      field('chipExpenses', 'Ausgaben in Chips'),
-                    ),
-                    if (d.containsKey('reportedDurationSeconds')) ...[
-                      field(
-                        'reportedMinutes',
-                        'Spieldauer laut Quelle (Minuten)',
-                      ),
-                      const Text(
-                        'Diese Dauer wird für Berichte verwendet. Pausenereignisse sind nicht bekannt und werden nicht erfunden.',
-                      ),
-                    ] else
-                      field('breakMinutes', 'Pause in Minuten'),
-                    if (tournament) ...[
-                      pair(
-                        field('placement', 'Platzierung'),
-                        field('players', 'Anzahl Spieler'),
-                      ),
-                      field('bounty', 'Bounty Gewinne'),
-                      if (kind == kinds[2])
-                        field(
-                          'multiDay',
-                          'Mehrtages-Verknüpfung / Event-ID',
-                          text: true,
+                  if (!widget.live)
+                    pair(dateField('start', 'Start'), dateField('end', 'Ende')),
+                  if (session) ...[
+                    definition('location', 'Location', locations),
+                    definition('game', 'Spiel', games),
+                    if (widget.onManageGames != null)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            await widget.onManageGames!();
+                            final updatedGames = await widget.repo.definitions(
+                              'game',
+                            );
+                            if (!mounted) return;
+                            setState(() {
+                              games = updatedGames;
+                              if (widget.entry == null &&
+                                  !games.any(
+                                    (g) =>
+                                        g['id'] == d['game'] &&
+                                        g['hidden'] != true,
+                                  )) {
+                                d.remove('game');
+                              }
+                              definitionEpoch++;
+                            });
+                          },
+                          icon: const Icon(Icons.tune, size: 16),
+                          label: const Text('Spiele verwalten'),
                         ),
-                    ],
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        'Staking · eigener Ergebnisanteil nach verkauften Anteilen',
                       ),
+                    if (widget.live)
+                      field('buyIn', 'Buy-in')
+                    else
+                      pair(
+                        field('buyIn', 'Buy-in'),
+                        field('cashOut', 'Cash-out'),
+                      ),
+                    if (!widget.live) ...[
+                      pair(
+                        field('rebuys', 'Anzahl an Rebuys'),
+                        field('rebuyCost', 'Rebuy Kosten'),
+                      ),
+                      pair(
+                        field('expenses', 'Ausgaben'),
+                        field('chipExpenses', 'Ausgaben in Chips'),
+                      ),
+                      if (d.containsKey('reportedDurationSeconds')) ...[
+                        field(
+                          'reportedMinutes',
+                          'Spieldauer laut Quelle (Minuten)',
+                        ),
+                        const Text(
+                          'Diese Dauer wird für Berichte verwendet. Pausenereignisse sind nicht bekannt und werden nicht erfunden.',
+                        ),
+                      ] else
+                        field('breakMinutes', 'Pause in Minuten'),
+                      if (tournament) ...[
+                        pair(
+                          field('placement', 'Platzierung'),
+                          field('players', 'Anzahl Spieler'),
+                        ),
+                        field('bounty', 'Bounty Gewinne'),
+                        if (kind == kinds[2])
+                          field(
+                            'multiDay',
+                            'Mehrtages-Verknüpfung / Event-ID',
+                            text: true,
+                          ),
+                      ],
+                      labeled(
+                        'Staking',
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 11,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            side: const BorderSide(color: Color(0xff395563)),
+                            foregroundColor: Theme.of(context)
+                                .colorScheme
+                                .onSurface,
+                          ),
+                          onPressed: () => setState(
+                            () => stakingExpanded = !stakingExpanded,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  stakingExpanded
+                                      ? 'Anteile und Abrechnung'
+                                      : [
+                                          'soldBp',
+                                          'stakingSettlement',
+                                          'stakingBoughtCost',
+                                          'stakingBoughtReturn',
+                                        ].any((k) => (d[k] as num? ?? 0) != 0)
+                                      ? 'Anteile / Abrechnung vorhanden'
+                                      : 'Keine Anteile gekauft oder verkauft',
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                              Icon(
+                                stakingExpanded
+                                    ? Icons.keyboard_arrow_up
+                                    : Icons.keyboard_arrow_down,
+                                color: const Color(0xff395563),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (stakingExpanded) ...[
+                        pair(
+                          field('soldPercent', 'Verkaufte Anteile (%)'),
+                          field('stakingSettlement', 'Abrechnung (±)'),
+                        ),
+                        pair(
+                          field(
+                            'stakingBoughtCost',
+                            'Gekaufte Anteile: Einsatz',
+                          ),
+                          field(
+                            'stakingBoughtReturn',
+                            'Gekaufte Anteile: Auszahlung',
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                  if (kind == kinds[4]) field('cashOut', 'Betrag (Bestand)'),
+                  if (kind == kinds[5]) field('expenses', 'Kosten Betrag'),
+                  if (kind == 'Staking') ...[
+                    field('stakingBoughtCost', 'Staking Einsatz'),
+                    field('stakingBoughtReturn', 'Staking Auszahlung'),
+                    field('stakingSettlement', 'Zusätzliche Abrechnung (±)'),
+                    const Text(
+                      'Staking-Ergebnis = Auszahlung − Einsatz + Abrechnung. Ändert den Saldo, zählt aber nicht als selbst gespielte Session.',
                     ),
-                    pair(
-                      field('soldPercent', 'Verkaufte Anteile (%)'),
-                      field('stakingSettlement', 'Abrechnung (±)'),
+                    const SizedBox(height: 16),
+                  ],
+                  if (isTransfer(kind)) ...[
+                    field(
+                      'transfer',
+                      kind == kinds[6] ? 'Betrag (±)' : 'Betrag',
                     ),
-                    pair(
-                      field('stakingBoughtCost', 'Gekaufte Anteile: Einsatz'),
-                      field(
-                        'stakingBoughtReturn',
-                        'Gekaufte Anteile: Auszahlung',
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Text(
+                        kind == kinds[6]
+                            ? 'Einzahlung mit Plus-, Auszahlung mit Minuszeichen. Beide ändern keine Pokerstatistik.'
+                            : 'Betrag positiv eingeben. Die gewählte Art bestimmt die Richtung; Pokerstatistiken bleiben unverändert.',
                       ),
                     ),
                   ],
-                ],
-                if (kind == kinds[4]) field('cashOut', 'Betrag (Bestand)'),
-                if (kind == kinds[5]) field('expenses', 'Kosten Betrag'),
-                if (kind == 'Staking') ...[
-                  field('stakingBoughtCost', 'Staking Einsatz'),
-                  field('stakingBoughtReturn', 'Staking Auszahlung'),
-                  field('stakingSettlement', 'Zusätzliche Abrechnung (±)'),
-                  const Text(
-                    'Staking-Ergebnis = Auszahlung − Einsatz + Abrechnung. Ändert den Saldo, zählt aber nicht als selbst gespielte Session.',
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (isTransfer(kind)) ...[
-                  field('transfer', kind == kinds[6] ? 'Betrag (±)' : 'Betrag'),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Text(
-                      kind == kinds[6]
-                          ? 'Einzahlung mit Plus-, Auszahlung mit Minuszeichen. Beide ändern keine Pokerstatistik.'
-                          : 'Betrag positiv eingeben. Die gewählte Art bestimmt die Richtung; Pokerstatistiken bleiben unverändert.',
+                  if (!widget.embedded)
+                    field('note', 'Session Notiz', text: true),
+                  if (session && !widget.embedded)
+                    const Text(
+                      'Tags und Fotos folgen in einer späteren Version.',
+                      style: TextStyle(color: Colors.blueGrey),
                     ),
-                  ),
+                  if (widget.embedded)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('inline-start'),
+                        onPressed: saving ? null : save,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: cyan,
+                          side: const BorderSide(color: cyan, width: 2),
+                          shape: const StadiumBorder(),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        icon: const Icon(Icons.monitor_heart_outlined),
+                        label: Text(saving ? 'Wird gestartet …' : 'START'),
+                      ),
+                    ),
                 ],
-                field('note', 'Session Notiz', text: true),
-                if (session)
-                  const Text(
-                    'Tags und Fotos folgen in einer späteren Version.',
-                    style: TextStyle(color: Colors.blueGrey),
-                  ),
-              ],
+              ),
             ),
           ),
         ),

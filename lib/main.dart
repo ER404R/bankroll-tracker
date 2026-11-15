@@ -14,6 +14,7 @@ import 'session_summary.dart';
 import 'device_services.dart';
 import 'import_screen.dart';
 import 'source_record_view.dart';
+import 'game_label.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -382,6 +383,7 @@ class _LedgerHomeState extends State<LedgerHome> {
           games: games,
           entry: entry,
           live: startLive,
+          onManageGames: gameManagement,
           prefs: widget.prefs,
         ),
       ),
@@ -535,6 +537,14 @@ class _LedgerHomeState extends State<LedgerHome> {
                       setState(() => page = e.key);
                     },
                   ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.tune),
+                  title: const Text('Spiele verwalten'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    gameManagement();
+                  },
                 ),
                 const Spacer(),
                 ListTile(
@@ -1766,7 +1776,7 @@ class _LedgerHomeState extends State<LedgerHome> {
         ...(cat == 'location' ? locations : games).map(
           (d) => ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(d['name']),
+            title: Text(cat == 'game' ? gameDefinitionLabel(d) : d['name']),
             subtitle: Text(
               d['hidden'] == true
                   ? 'In Eingabe ausgeblendet'
@@ -1801,6 +1811,60 @@ class _LedgerHomeState extends State<LedgerHome> {
       ),
     ]),
   ]);
+  Future<void> gameManagement() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StatefulBuilder(
+          builder: (c, update) => Scaffold(
+            appBar: AppBar(title: const Text('Spiele verwalten')),
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                const Text(
+                  'Name, Limit und Standard-Blinds gelten für neue Sessions. Gespeicherte Blinds, Beträge und laufende Sessions bleiben bei Änderungen erhalten.',
+                ),
+                const SizedBox(height: 12),
+                for (final game in games)
+                  Card(
+                    child: ListTile(
+                      title: Text(gameDefinitionLabel(game)),
+                      subtitle: Text(
+                        '${game['hidden'] == true ? 'Archiviert · nicht für neue Sessions' : 'Für neue Sessions verfügbar'}\n${all.where((e) => e.s('game') == game['id']).length} gespeicherte Einträge',
+                      ),
+                      isThreeLine: true,
+                      onTap: () async {
+                        await definition('game', existing: game);
+                        if (c.mounted) update(() {});
+                      },
+                      trailing: IconButton(
+                        tooltip: 'Zusammenführen',
+                        icon: const Icon(Icons.merge),
+                        onPressed: () async {
+                          await merge('game', game);
+                          await refresh();
+                          if (c.mounted) update(() {});
+                        },
+                      ),
+                    ),
+                  ),
+                FilledButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Spiel erstellen'),
+                  onPressed: () async {
+                    await definition('game');
+                    if (c.mounted) update(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await refresh();
+  }
+
   Future<void> definition(String cat, {Json? existing}) async {
     final d = Map<String, dynamic>.from(
       existing ??
@@ -1930,7 +1994,11 @@ class _LedgerHomeState extends State<LedgerHome> {
                 ],
                 if (cat != 'bankroll')
                   SwitchListTile(
-                    title: const Text('In Eingabe ausblenden'),
+                    title: Text(
+                      cat == 'game'
+                          ? 'Für neue Sessions archivieren'
+                          : 'In Eingabe ausblenden',
+                    ),
                     value: d['hidden'] == true,
                     onChanged: (v) => update(() => d['hidden'] = v),
                   ),
@@ -1951,8 +2019,12 @@ class _LedgerHomeState extends State<LedgerHome> {
                       )
                       .length;
                   if (await confirm(
-                    '$title und Einträge löschen?',
-                    '$count zugeordnete Einträge in allen Bankrolls werden dauerhaft gelöscht. Zum Erhalten der Einträge stattdessen ausblenden oder zusammenführen.',
+                    cat == 'game'
+                        ? 'Spiel archivieren?'
+                        : '$title und Einträge löschen?',
+                    cat == 'game'
+                        ? '$count zugeordnete Einträge und laufende Sessions bleiben erhalten. Das Spiel wird nur für neue Sessions ausgeblendet und kann später wieder aktiviert werden.'
+                        : '$count zugeordnete Einträge in allen Bankrolls werden dauerhaft gelöscht. Zum Erhalten der Einträge stattdessen ausblenden oder zusammenführen.',
                   )) {
                     try {
                       await repo.deleteDefinitionAndEntries(cat, d['id']);
@@ -1962,7 +2034,10 @@ class _LedgerHomeState extends State<LedgerHome> {
                     }
                   }
                 },
-                child: const Text('Löschen', style: TextStyle(color: negative)),
+                child: Text(
+                  cat == 'game' ? 'Archivieren' : 'Löschen',
+                  style: const TextStyle(color: negative),
+                ),
               ),
             TextButton(
               onPressed: () => Navigator.pop(c),
@@ -2011,6 +2086,7 @@ class _LedgerHomeState extends State<LedgerHome> {
                                   moneyInput(originalAmounts['smallBlind'])
                         ? originalAmounts['smallBlind']
                         : amount(sb.text);
+                    d['smallBlindOverride'] = sb.text.trim().isNotEmpty;
                     d['thirdBlind'] =
                         existing != null &&
                             third.text ==
@@ -2035,7 +2111,9 @@ class _LedgerHomeState extends State<LedgerHome> {
                       cat != 'bankroll' &&
                       !await confirm(
                         'Definition ändern?',
-                        '${all.where((e) => e.s(cat == 'location' ? 'location' : 'game') == d['id']).length} zugeordnete Einträge in allen Bankrolls werden unter dieser Definition angezeigt.',
+                        cat == 'game'
+                            ? 'Name und Standard-Blinds für neue Sessions ändern. Historische Blinds und Beträge sowie die laufende Session bleiben erhalten.'
+                            : '${all.where((e) => e.s('location') == d['id']).length} zugeordnete Einträge in allen Bankrolls werden unter dieser Definition angezeigt.',
                       )) {
                     return;
                   }
@@ -2088,7 +2166,9 @@ class _LedgerHomeState extends State<LedgerHome> {
               .map(
                 (d) => DropdownMenuItem<String>(
                   value: d['id'],
-                  child: Text(d['name']),
+                  child: Text(
+                    cat == 'game' ? gameDefinitionLabel(d) : d['name'],
+                  ),
                 ),
               )
               .toList(),
@@ -2109,7 +2189,7 @@ class _LedgerHomeState extends State<LedgerHome> {
     if (ok == true &&
         await confirm(
           'Zusammenführen bestätigen',
-          '${all.where((e) => e.s(cat == 'location' ? 'location' : 'game') == source['id']).length} Einträge in allen Bankrolls werden zugeordnet. „${source['name']}“ wird entfernt.',
+          '${all.where((e) => e.s(cat == 'location' ? 'location' : 'game') == source['id']).length} Einträge in allen Bankrolls werden zugeordnet. Gespeicherte Blinds und Beträge bleiben erhalten. „${source['name']}“ wird entfernt.',
         )) {
       await guarded(
         () => repo.replaceDefinition(cat, source, mergeInto: target),
@@ -2400,19 +2480,21 @@ class _LedgerHomeState extends State<LedgerHome> {
 
   Widget liveScreen() {
     if (live == null) {
-      return list([
-        card('Neue Session starten', [
-          const Text(
-            'Wähle Spiel, Location und Buy-in. Erst „Start“ legt eine laufende Session an. Ein Konto oder Standortzugriff ist nicht erforderlich.',
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: () => form(startLive: true),
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Session konfigurieren'),
-          ),
-        ]),
-      ]);
+      if (bankrolls.isEmpty) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return EntryForm(
+        key: const ValueKey('inline-live-setup'),
+        repo: repo,
+        bankrolls: bankrolls,
+        locations: locations,
+        games: games,
+        prefs: widget.prefs,
+        live: true,
+        embedded: true,
+        onSaved: refresh,
+        onManageGames: gameManagement,
+      );
     }
     final e = Entry(live!);
     final paused = live!['pausedAt'] != null;
@@ -2735,6 +2817,7 @@ class _LedgerHomeState extends State<LedgerHome> {
           games: games,
           entry: Entry(l),
           finishing: true,
+          onManageGames: gameManagement,
           prefs: widget.prefs,
         ),
       ),

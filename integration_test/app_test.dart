@@ -47,7 +47,15 @@ void main() {
       );
       expect(find.text('Bankroll'), findsNothing);
       expect(find.byKey(const ValueKey('handsPerHour')), findsNothing);
-      await tester.tap(find.byTooltip('Spiel erstellen'));
+      await tester.tap(
+        find.byWidgetPredicate(
+          (w) =>
+              w is DropdownButtonFormField<String> &&
+              w.key.toString().contains('game-'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('+ Spiel erstellen').last);
       await tester.pumpAndSettle();
       final dialog = find.byType(AlertDialog);
       final fields = find.descendant(
@@ -172,29 +180,39 @@ void main() {
         alignment: .5,
       );
       await tester.pumpAndSettle();
-      final dropdown = find
-          .ancestor(
-            of: find.text(label.toUpperCase()).last,
-            matching: find.byWidgetPredicate(
-              (w) => w is DropdownButtonFormField<String>,
+      final dropdown = find.byWidgetPredicate(
+        (w) =>
+            w is DropdownButtonFormField<String> &&
+            w.key.toString().contains(
+              label == 'Location' ? 'location-' : 'game-',
             ),
-          )
-          .first;
+      );
       await tester.tap(dropdown);
       await tester.pumpAndSettle();
-      await tester.tap(find.text(value).last);
+      await tester.tap(
+        find
+            .textContaining(
+              value
+                  .replaceFirst(RegExp(r'^NL\s+'), '')
+                  .replaceFirst(
+                    RegExp(r'\s+\d+[,.]?\d*\s*/\s*\d+[,.]?\d*\s*$'),
+                    '',
+                  ),
+            )
+            .last,
+      );
       await tester.pumpAndSettle();
     }
 
     // Start is an explicit UI commit; no account or location permission is needed.
     await openPage('Live Session');
-    await tester.tap(find.text('Session konfigurieren'));
-    await tester.pumpAndSettle();
+    expect(find.text('Session konfigurieren'), findsNothing);
     await choose('Location', location['name'] as String);
     await choose('Spiel', game['name'] as String);
     await tester.ensureVisible(find.byKey(const ValueKey('buyIn')));
     await tester.enterText(find.byKey(const ValueKey('buyIn')), '10');
-    await tester.tap(find.text('Start'));
+    await tester.ensureVisible(find.byKey(const ValueKey('inline-start')));
+    await tester.tap(find.byKey(const ValueKey('inline-start')));
     await tester.pumpAndSettle();
     expect(await repo.state('live'), isNotNull);
     await Scrollable.ensureVisible(

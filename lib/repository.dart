@@ -233,20 +233,71 @@ class LedgerRepository {
     Json d, {
     String? mergeInto,
   }) async {
-    final all = await entries();
     final key = category == 'location' ? 'location' : 'game';
     await db.transaction((t) async {
-      for (final e in all.where((e) => e.s(key) == d['id'])) {
-        e.data[key] = mergeInto ?? d['id'];
-        if (category == 'game' && mergeInto == null) {
-          e.data['bigBlind'] = d['bigBlind'] ?? 0;
-          e.data['smallBlind'] = d['smallBlind'] ?? 0;
+      final oldRows = await t.query(
+        'definitions',
+        where: 'id=? AND category=?',
+        whereArgs: [d['id'], category],
+      );
+      if (oldRows.isEmpty) {
+        throw const FormatException('Definition nicht gefunden');
+      }
+      final old = Map<String, dynamic>.from(
+        jsonDecode(oldRows.single['payload'] as String),
+      );
+      if (mergeInto != null) {
+        if (mergeInto == d['id']) {
+          throw const FormatException('Identische Definition');
         }
+        final target = await t.query(
+          'definitions',
+          where: 'id=? AND category=?',
+          whereArgs: [mergeInto, category],
+        );
+        if (target.isEmpty) {
+          throw const FormatException('Zieldefinition nicht gefunden');
+        }
+        final targetData = Map<String, dynamic>.from(
+          jsonDecode(target.single['payload'] as String),
+        );
+        if (old['currency'] != null &&
+            targetData['currency'] != null &&
+            old['currency'] != targetData['currency']) {
+          throw const FormatException(
+            'Definitionen mit unterschiedlichen Währungen können nicht zusammengeführt werden',
+          );
+        }
+      }
+      Json preserveFacts(Json entry) {
+        if (category == 'game') {
+          // Freeze legacy fallback values before changing a game's defaults/ID.
+          entry.putIfAbsent('bigBlind', () => old['bigBlind'] ?? 0);
+          entry.putIfAbsent(
+            'smallBlind',
+            () =>
+                old['smallBlind'] ??
+                defaultSmallBlind((entry['bigBlind'] as num?)?.toInt() ?? 0),
+          );
+          entry.putIfAbsent(
+            'smallBlindOverride',
+            () => old['smallBlindOverride'] ?? true,
+          );
+        }
+        if (mergeInto != null) entry[key] = mergeInto;
+        return entry;
+      }
+
+      for (final row in await t.query('entries')) {
+        final entry = Map<String, dynamic>.from(
+          jsonDecode(row['payload'] as String),
+        );
+        if (entry[key] != d['id']) continue;
         await t.update(
           'entries',
-          {'payload': jsonEncode(e.data)},
+          {'payload': jsonEncode(preserveFacts(entry))},
           where: 'id=?',
-          whereArgs: [e.id],
+          whereArgs: [row['id']],
         );
       }
       final activeRows = await t.query(
@@ -255,16 +306,15 @@ class LedgerRepository {
         whereArgs: ['live'],
       );
       if (activeRows.isNotEmpty) {
-        final active = jsonDecode(activeRows.first['payload'] as String);
+        final active = jsonDecode(activeRows.single['payload'] as String);
         if (active != null && active[key] == d['id']) {
-          active[key] = mergeInto ?? d['id'];
-          if (category == 'game' && mergeInto == null) {
-            active['bigBlind'] = d['bigBlind'] ?? 0;
-            active['smallBlind'] = d['smallBlind'] ?? 0;
-          }
           await t.update(
             'state',
-            {'payload': jsonEncode(active)},
+            {
+              'payload': jsonEncode(
+                preserveFacts(Map<String, dynamic>.from(active)),
+              ),
+            },
             where: 'key=?',
             whereArgs: ['live'],
           );
@@ -273,16 +323,35 @@ class LedgerRepository {
       if (mergeInto != null) {
         await t.delete('definitions', where: 'id=?', whereArgs: [d['id']]);
       } else {
-        await t.insert('definitions', {
-          'id': d['id'],
-          'category': category,
-          'payload': jsonEncode(d),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await t.update(
+          'definitions',
+          {'payload': jsonEncode(d)},
+          where: 'id=?',
+          whereArgs: [d['id']],
+        );
       }
     });
   }
 
+  /// Removing a game from future selection must never delete played sessions.
+  Future<void> archiveGame(String id) async {
+    final rows = await db.query(
+      'definitions',
+      where: 'id=? AND category=?',
+      whereArgs: [id, 'game'],
+    );
+    if (rows.isEmpty) throw const FormatException('Spiel nicht gefunden');
+    final game = Map<String, dynamic>.from(
+      jsonDecode(rows.single['payload'] as String),
+    );
+    await replaceDefinition('game', {...game, 'hidden': true});
+  }
+
   Future<void> deleteDefinitionAndEntries(String category, String id) async {
+    if (category == 'game') {
+      await archiveGame(id);
+      return;
+    }
     if (category == 'bankroll') {
       throw const FormatException('Bankroll zuerst leeren und archivieren');
     }
