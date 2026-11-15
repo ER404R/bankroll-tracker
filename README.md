@@ -1,19 +1,7 @@
 # Bankroll Tracker
 
-Local Android poker bankroll tracker in Flutter. German is the initial locale. No account, backend or network connection is needed for local workflows.
+Bankroll Tracker is an offline Android app for tracking poker sessions, bankroll movements and results. Built with Flutter, it includes live session tracking, reports and local JSON import, with your data stored on your device.
 
-The app includes Home, seven Bankroll tabs, five entry types (cash games, tournaments, deposits, withdrawals and staking), manual session editing, rolling monthly/yearly reports, original-style Trend controls and filters, opening-balance/location/game maintenance, recoverable live sessions and local settings. Login and cloud sync are explicitly unavailable. Benchmark and hands/hour inputs are removed; the normal UX uses one bankroll. Import/export and migration are the final 1.0 milestone, after the owner reviews the core app against the reference.
+**AI development disclosure:** This project was developed entirely by AI. Bugs, security vulnerabilities and data-loss risks may remain; it has not undergone an independent security audit, so keep backups of important data.
 
-```sh
-/home/erik/.local/share/flutter/bin/flutter --no-version-check pub get
-/home/erik/.local/share/flutter/bin/flutter --no-version-check analyze
-/home/erik/.local/share/flutter/bin/flutter --no-version-check test
-JAVA_HOME=/home/erik/.local/share/android-studio/jbr \
-  /home/erik/.local/share/flutter/bin/flutter --no-version-check build apk --debug
-```
-
-Use only the dedicated `felt_ledger_dev` emulator for development. Never target an attached physical phone. Private reference and validation documents are kept locally and excluded from this public repository.
-
-See [GitHub releases and Obtainium setup](docs/DISTRIBUTION.md).
-
-Local JSON import with preview, reconciliation and undo is available under Account. See [import file format](docs/IMPORT_FORMAT.md). Full migration and backup restore remain outstanding.
+Download the APK from [GitHub Releases](https://github.com/ER404R/bankroll-tracker/releases), or follow the [Obtainium setup](docs/DISTRIBUTION.md) to receive updates. See the [JSON import documentation](docs/IMPORT_FORMAT.md) for supported files and current limitations.
