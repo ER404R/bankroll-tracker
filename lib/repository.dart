@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 
 import 'domain.dart';
+import 'game_label.dart';
 
 class LedgerRepository {
   final Database db;
@@ -45,17 +46,29 @@ class LedgerRepository {
     return LedgerRepository(db);
   }
 
-  Future<List<Json>> definitions(String category) async =>
-      (await db.query(
-            'definitions',
-            where: 'category=?',
-            whereArgs: [category],
-          ))
-          .map(
-            (e) =>
-                Map<String, dynamic>.from(jsonDecode(e['payload'] as String)),
-          )
-          .toList();
+  Future<List<Json>> definitions(String category) async {
+    final result =
+        (await db.query(
+              'definitions',
+              where: 'category=?',
+              whereArgs: [category],
+            ))
+            .map(
+              (e) =>
+                  Map<String, dynamic>.from(jsonDecode(e['payload'] as String)),
+            )
+            .toList();
+    if (category == 'game') {
+      final sessions = (await entries()).map((e) => e.data).toList();
+      final live = await state('live');
+      if (live is Map<String, dynamic>) sessions.add(live);
+      for (final game in result) {
+        game['gameType'] = effectiveGameType(game, sessions);
+      }
+    }
+    return result;
+  }
+
   Future<List<Entry>> entries() async {
     final all = (await db.query('entries'))
         .map(
@@ -233,6 +246,26 @@ class LedgerRepository {
     Json d, {
     String? mergeInto,
   }) async {
+    if (category == 'game') {
+      final games = await definitions('game');
+      final source = games.where((g) => g['id'] == d['id']).firstOrNull;
+      final target = games.where((g) => g['id'] == mergeInto).firstOrNull;
+      if (source != null &&
+          d['gameType'] != null &&
+          d['gameType'] != source['gameType']) {
+        throw const FormatException(
+          'Spielart bestehender Definitionen bleibt erhalten; bitte neues Spiel erstellen',
+        );
+      }
+      if (mergeInto != null &&
+          source != null &&
+          target != null &&
+          source['gameType'] != target['gameType']) {
+        throw const FormatException(
+          'Cash Games und Turnierspiele können nicht zusammengeführt werden',
+        );
+      }
+    }
     final key = category == 'location' ? 'location' : 'game';
     await db.transaction((t) async {
       final oldRows = await t.query(

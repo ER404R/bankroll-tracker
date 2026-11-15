@@ -72,6 +72,38 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   });
+  test('imported tournament definitions have a distinct type and no cash-stakes label', () async {
+    final cash = sample();
+    final tournament = sample(id: 'tournament-1')..['kind'] = 'tournament';
+    tournament['game'] = {
+      ...(tournament['game'] as Map),
+      'smallBlind': '0',
+      'bigBlind': '0',
+    };
+    final doc = ImportDocument.parse(
+      utf8.encode(jsonEncode(envelope([cash, tournament]))),
+    );
+    expect(doc.records[0].game['gameType'], 'cash_game');
+    expect(doc.records[1].game['gameType'], 'tournament');
+    final repo = await LedgerRepository.open(path: inMemoryDatabasePath);
+    final imports = ImportRepository(repo);
+    final batch = await imports.commit(await imports.preview(doc));
+    final games = await repo.definitions('game');
+    expect(games.map((g) => g['gameType']).toSet(), {
+      'cash_game',
+      'tournament',
+    });
+    expect(
+      (await repo.entries())
+          .where((e) => e.kind == 'Turnier')
+          .single
+          .n('buyIn'),
+      amount('10.1234'),
+    );
+    await imports.rollback(batch);
+    expect(await repo.entries(), isEmpty);
+    await repo.db.close();
+  });
   test('format preserves decimal precision, original data, duration and overnight times', () {
     final doc = document(envelope([sample()]));
     final e = doc.records.single.materialize('a', 'b', 'c', 'd', 'e', 's');

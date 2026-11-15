@@ -9,7 +9,7 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--serial', required=True)
-parser.add_argument('--target', choices=['app_test','report_review_test'], default='app_test')
+parser.add_argument('--target', choices=['app_test','report_review_test','tournament_games_test'], default='app_test')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 adb = '/home/erik/Android/Sdk/platform-tools/adb'

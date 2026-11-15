@@ -1883,6 +1883,7 @@ class _LedgerHomeState extends State<LedgerHome> {
             'ante': 0,
           },
     );
+    if (cat == 'game') d.putIfAbsent('gameType', () => 'cash_game');
     final title = cat == 'bankroll'
         ? 'Bankroll'
         : cat == 'location'
@@ -1960,6 +1961,27 @@ class _LedgerHomeState extends State<LedgerHome> {
                     onChanged: (s) => d['room'] = s,
                   ),
                 if (cat == 'game') ...[
+                  DropdownButtonFormField<String>(
+                    initialValue: d['gameType'],
+                    decoration: const InputDecoration(labelText: 'Spielart'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'cash_game',
+                        child: Text('Cash Game'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'tournament',
+                        child: Text('Turnier'),
+                      ),
+                    ],
+                    onChanged: existing == null
+                        ? (v) => update(() => d['gameType'] = v)
+                        : null,
+                  ),
+                  if (d['gameType'] == 'tournament')
+                    const Text(
+                      'Blinds optional: Startlevel in Chips, keine Geldeinsätze.',
+                    ),
                   DropdownButtonFormField<String>(
                     initialValue: d['limit'],
                     items: ['NL', 'PL', 'FL', 'Sonstige']
@@ -2145,7 +2167,8 @@ class _LedgerHomeState extends State<LedgerHome> {
         .where(
           (e) =>
               e['id'] != source['id'] &&
-              (cat != 'location' || e['currency'] == source['currency']),
+              (cat != 'location' || e['currency'] == source['currency']) &&
+              (cat != 'game' || e['gameType'] == source['gameType']),
         )
         .toList();
     if (defs.isEmpty) {
