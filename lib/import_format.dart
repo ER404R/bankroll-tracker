@@ -276,6 +276,7 @@ class ImportRecord {
       });
       final g = object(raw['game'], 'game');
       game.addAll({
+        'gameType': kind,
         'name': requiredString(g, 'name'),
         'limit': requiredString(g, 'limit'),
         'currency': currency,

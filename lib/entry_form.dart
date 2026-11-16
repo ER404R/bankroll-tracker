@@ -173,6 +173,7 @@ class _EntryFormState extends State<EntryForm> {
   Widget dropdown(String label, String key, List<String> values) => labeled(
     label,
     DropdownButtonFormField<String>(
+      key: ValueKey(key),
       initialValue: d[key],
       isExpanded: true,
       style: TextStyle(
@@ -188,7 +189,13 @@ class _EntryFormState extends State<EntryForm> {
             ),
           )
           .toList(),
-      onChanged: (v) => setState(() => d[key] = v),
+      onChanged: (v) => setState(() {
+        d[key] = v;
+        if (key == 'kind') {
+          d.remove('game');
+          definitionEpoch++;
+        }
+      }),
     ),
   );
   Widget pair(Widget a, Widget b) => LayoutBuilder(
@@ -295,7 +302,14 @@ class _EntryFormState extends State<EntryForm> {
   Widget definition(String category, String label, List<Json> definitions) {
     final key = category == 'location' ? 'location' : 'game';
     final available = definitions
-        .where((x) => x['hidden'] != true || x['id'] == d[key])
+        .where(
+          (x) =>
+              (x['hidden'] != true &&
+                  (category != 'game' || gameMatchesSession(x, d['kind']))) ||
+              (x['id'] == d[key] &&
+                  widget.entry?.s(key) == x['id'] &&
+                  widget.entry?.kind == d['kind']),
+        )
         .toList();
     return labeled(
       label,
@@ -356,7 +370,11 @@ class _EntryFormState extends State<EntryForm> {
       builder: (c) => StatefulBuilder(
         builder: (c, update) => AlertDialog(
           title: Text(
-            category == 'location' ? 'Location erstellen' : 'Spiel erstellen',
+            category == 'location'
+                ? 'Location erstellen'
+                : tournamentKind(d['kind'])
+                ? 'Turnierspiel erstellen'
+                : 'Cash-Game-Spiel erstellen',
           ),
           content: SingleChildScrollView(
             child: Column(
@@ -376,6 +394,10 @@ class _EntryFormState extends State<EntryForm> {
                     onChanged: (v) => room = v!,
                   )
                 else ...[
+                  if (tournamentKind(d['kind']))
+                    const Text(
+                      'Blinds optional: Startlevel in Chips, keine Geldeinsätze.',
+                    ),
                   TextField(
                     controller: sb,
                     keyboardType: const TextInputType.numberWithOptions(
@@ -426,6 +448,9 @@ class _EntryFormState extends State<EntryForm> {
                     'name': n.text.trim(),
                     'currency': d['currency'],
                     'room': room,
+                    if (category == 'game')
+                      'gameType': gameTypeForSession(d['kind']),
+                    'smallBlindOverride': sb.text.trim().isNotEmpty,
                     'bigBlind': value,
                     'smallBlind': sb.text.trim().isEmpty
                         ? defaultSmallBlind(value)
@@ -530,6 +555,13 @@ class _EntryFormState extends State<EntryForm> {
         final sameGame =
             widget.entry != null && entry['game'] == widget.entry!.s('game');
         final selectedGame = games.firstWhere((g) => g['id'] == entry['game']);
+        final unchangedLegacy = sameGame && entry['kind'] == widget.entry!.kind;
+        if (!unchangedLegacy &&
+            !gameMatchesSession(selectedGame, entry['kind'])) {
+          throw const FormatException(
+            'Bitte ein zur Sessionart passendes Spiel wählen',
+          );
+        }
         if (!sameGame || !entry.containsKey('bigBlind')) {
           entry['bigBlind'] = selectedGame['bigBlind'] ?? 0;
         }

@@ -32,6 +32,13 @@ Kinds and fields:
 | `staking` | `money.stakingBoughtCost`, `stakingBoughtReturn`, signed `stakingSettlement` |
 | `cash_game`, `tournament` | `start`, `end` as local YYYY-MM-DDTHH:mm; integer `durationSeconds`; `tableSize`; `location` with `name`/`room`; `game` with `name`, `limit` (NL/PL/FL), decimal-string `smallBlind`/`bigBlind`; `money` with `buyIn`, `cashOut`, `rebuyCost`, `addonCost`, `bounty` |
 
+Imported game definitions inherit `cash_game` or `tournament` from their record.
+Tournament choices display the variant and limit without a cash-stakes prefix.
+For version 1 files, the blind fields remain required for compatibility; zero
+placeholders are retained as source facts and do not represent monetary stakes.
+Existing imported tournament-only definitions are recognized from linked sessions
+without rewriting the source archive, IDs, monetary values or stored blind fields.
+
 Sessions optionally include integer `rebuys`, `placement`, `players`, `paidPlaces`.
 Results must equal cash-out + bounty − buy-in − rebuy cost − add-on cost.
 Add-on costs join additional purchase cost in current calculations while their
